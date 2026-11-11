@@ -10,6 +10,7 @@ export interface UserSettings {
   releaseYearTo: number | null;
   minRating: number | null;
   genreDiversity: boolean;
+  showWatchedDate?: boolean;
 }
 
 export interface IWatchlistEntry {
@@ -65,6 +66,7 @@ const UserSettingsSchema = new Schema<UserSettings>(
     releaseYearTo: { type: Number, default: null },
     minRating: { type: Number, default: null },
     genreDiversity: { type: Boolean, default: true },
+    showWatchedDate: { type: Boolean, default: false },
   },
   { _id: false }
 );
@@ -118,6 +120,7 @@ const UserSchema = new Schema<IUser>(
         releaseYearTo: null,
         minRating: null,
         genreDiversity: true,
+        showWatchedDate: false,
       }),
     },
     watchlist: { type: [WatchlistEntrySchema], default: [] },

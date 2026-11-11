@@ -27,7 +27,8 @@ export function isDefaultSettings(settings: UserSettings): boolean {
     settings.releaseYearFrom === null &&
     settings.releaseYearTo === null &&
     settings.minRating === null &&
-    settings.genreDiversity === true
+    settings.genreDiversity === true &&
+    !settings.showWatchedDate
   );
 }
 
@@ -35,6 +36,9 @@ export function buildSettingsMainKeyboard(settings: UserSettings): InlineKeyboar
   const diversityLabel = settings.genreDiversity
     ? 'Разнообразие: Вкл'
     : 'Разнообразие: Выкл';
+  const watchedDateLabel = settings.showWatchedDate
+    ? 'Дата в истории: Вкл'
+    : 'Дата в истории: Выкл';
 
   return new SmartKeyboard()
     .callback('🚫 Жанры', 'set:genres')
@@ -44,10 +48,11 @@ export function buildSettingsMainKeyboard(settings: UserSettings): InlineKeyboar
     .callback('⭐ Рейтинг', 'set:rating')
     .row('center')
     .callback(diversityLabel, 'set:toggle_diversity')
+    .callback(watchedDateLabel, 'set:toggle_watched_date')
+    .row('center')
     .callback('🔄 Сбросить', 'set:reset', {
       disabled: isDefaultSettings(settings),
     })
-    .row('center')
     .callback('⬅️ В меню', 'nav:menu')
     .toMarkup();
 }
@@ -225,6 +230,20 @@ export function registerSettingsHandlers(
     const user = await usrSvc.findOrCreateUser({ telegramId });
     await usrSvc.updateSettings(telegramId, {
       genreDiversity: !user.settings.genreDiversity,
+    });
+    await ctx.answerCallbackQuery();
+    await renderMainSettings(ctx, true);
+  });
+
+  bot.callbackQuery('set:toggle_watched_date', async (ctx) => {
+    const telegramId = ctx.from?.id;
+    if (!telegramId) {
+      return;
+    }
+
+    const user = await usrSvc.findOrCreateUser({ telegramId });
+    await usrSvc.updateSettings(telegramId, {
+      showWatchedDate: !user.settings.showWatchedDate,
     });
     await ctx.answerCallbackQuery();
     await renderMainSettings(ctx, true);

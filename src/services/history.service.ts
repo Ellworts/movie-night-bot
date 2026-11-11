@@ -1,4 +1,4 @@
-import { IWatchlistEntry, UserModel } from '../models/User';
+import { IWatchlistEntry, ReactionType, UserModel } from '../models/User';
 
 export type HistoryCategory = 'selected' | 'watched' | 'liked' | 'disliked';
 
@@ -10,6 +10,7 @@ export interface HistoryRecordItem {
   year: number | null;
   letterboxdUri: string | null;
   tmdbId: number | null;
+  reaction: ReactionType | null;
 }
 
 export interface UserHistorySummary {
@@ -18,6 +19,7 @@ export interface UserHistorySummary {
   watchedCount: number;
   likedCount: number;
   dislikedCount: number;
+  unratedCount: number;
 }
 
 export interface WatchlistPageResult {
@@ -26,6 +28,16 @@ export interface WatchlistPageResult {
   page: number;
   totalPages: number;
   pageSize: number;
+}
+
+export interface HistoryPageResult {
+  type: HistoryCategory;
+  items: HistoryRecordItem[];
+  totalCount: number;
+  page: number;
+  totalPages: number;
+  pageSize: number;
+  showWatchedDate: boolean;
 }
 
 export class HistoryService {
@@ -42,6 +54,7 @@ export class HistoryService {
         watchedCount: 0,
         likedCount: 0,
         dislikedCount: 0,
+        unratedCount: 0,
       };
     }
 
@@ -58,6 +71,8 @@ export class HistoryService {
     const watchedCount = user.watched.length;
     const likedCount = user.watched.filter((w) => w.reaction === 'like').length;
     const dislikedCount = user.watched.filter((w) => w.reaction === 'dislike').length;
+    const unratedWatched = user.watched.filter((w) => w.reaction === null).length;
+    const unratedSelected = user.selected.filter((s) => !watchedIds.has(s.id)).length;
     const selectedCount = user.selected.length;
 
     return {
@@ -66,6 +81,7 @@ export class HistoryService {
       watchedCount,
       likedCount,
       dislikedCount,
+      unratedCount: unratedWatched + unratedSelected,
     };
   }
 
@@ -95,23 +111,31 @@ export class HistoryService {
     };
   }
 
-  /**
-   * Returns history items for a user and category ordered by most recent date.
-   */
-  public async getUserHistoryByType(
-    telegramId: number,
-    type: HistoryCategory,
-    limit: number = 15
-  ): Promise<HistoryRecordItem[]> {
-    const user = await UserModel.findOne({ telegramId }).lean();
-    if (!user) {
-      return [];
-    }
-
+  private buildSortedHistoryItems(
+    user: {
+      selected: Array<{
+        id: string;
+        title: string;
+        year: number | null;
+        letterboxdUri: string | null;
+        tmdbId: number | null;
+        selectedAt: Date;
+      }>;
+      watched: Array<{
+        id: string;
+        title: string;
+        year: number | null;
+        letterboxdUri: string | null;
+        tmdbId: number | null;
+        reaction: ReactionType | null;
+        watchedAt: Date;
+      }>;
+    },
+    type: HistoryCategory
+  ): HistoryRecordItem[] {
     if (type === 'selected') {
       return [...user.selected]
         .sort((a, b) => new Date(b.selectedAt).getTime() - new Date(a.selectedAt).getTime())
-        .slice(0, limit)
         .map((s) => ({
           id: s.id,
           type: 'selected',
@@ -120,6 +144,7 @@ export class HistoryService {
           year: s.year,
           letterboxdUri: s.letterboxdUri,
           tmdbId: s.tmdbId,
+          reaction: null,
         }));
     }
 
@@ -135,7 +160,6 @@ export class HistoryService {
 
     return [...filtered]
       .sort((a, b) => new Date(b.watchedAt).getTime() - new Date(a.watchedAt).getTime())
-      .slice(0, limit)
       .map((w) => ({
         id: w.id,
         type,
@@ -144,7 +168,90 @@ export class HistoryService {
         year: w.year,
         letterboxdUri: w.letterboxdUri,
         tmdbId: w.tmdbId,
+        reaction: w.reaction,
       }));
+  }
+
+  /**
+   * Returns a paginated page (15 items per page by default) of history items for a category.
+   */
+  public async getUserHistoryPage(
+    telegramId: number,
+    type: HistoryCategory,
+    requestedPage: number = 1,
+    pageSize: number = 15
+  ): Promise<HistoryPageResult> {
+    const user = await UserModel.findOne({ telegramId }).lean();
+    if (!user) {
+      return {
+        type,
+        items: [],
+        totalCount: 0,
+        page: 1,
+        totalPages: 1,
+        pageSize,
+        showWatchedDate: false,
+      };
+    }
+
+    const allItems = this.buildSortedHistoryItems(user, type);
+    const totalCount = allItems.length;
+    const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+    const page = Math.min(Math.max(1, requestedPage), totalPages);
+    const skip = (page - 1) * pageSize;
+    const items = allItems.slice(skip, skip + pageSize);
+
+    return {
+      type,
+      items,
+      totalCount,
+      page,
+      totalPages,
+      pageSize,
+      showWatchedDate: Boolean(user.settings?.showWatchedDate),
+    };
+  }
+
+  /**
+   * Looks up a movie by its 1-based display number (`1..totalCount`) in a given history category.
+   */
+  public async getHistoryItemByNumber(
+    telegramId: number,
+    type: HistoryCategory,
+    itemNumber: number
+  ): Promise<{ item: HistoryRecordItem; totalCount: number } | null> {
+    const user = await UserModel.findOne({ telegramId }).lean();
+    if (!user) {
+      return null;
+    }
+
+    const allItems = this.buildSortedHistoryItems(user, type);
+    const totalCount = allItems.length;
+    if (totalCount === 0) {
+      return null;
+    }
+
+    const index = itemNumber - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= totalCount) {
+      return null;
+    }
+
+    return {
+      item: allItems[index],
+      totalCount,
+    };
+  }
+
+  /**
+   * Returns history items for a user and category ordered by most recent date.
+   */
+  public async getUserHistoryByType(
+    telegramId: number,
+    type: HistoryCategory,
+    limit: number = 15
+  ): Promise<HistoryRecordItem[]> {
+    const pageData = await this.getUserHistoryPage(telegramId, type, 1, limit);
+    return pageData.items;
   }
 }
 

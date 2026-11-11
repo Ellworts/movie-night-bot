@@ -9,44 +9,34 @@ import {
 import { FeedbackService, feedbackService } from '../../services/feedback.service';
 import { SmartKeyboard } from '../uiKit';
 import {
-  formatHistoryListHtml,
+  buildLetterboxdUrl,
+  escapeHtml,
+  formatHistoryPageHtml,
   formatHistorySummaryHtml,
   formatWatchlistPageHtml,
   formatRateableMovieHtml,
 } from '../formatters';
 
-export function buildHistoryKeyboard(activeTab?: HistoryCategory): InlineKeyboardMarkup {
-  const kb = new SmartKeyboard();
+interface PendingRateEditState {
+  type: 'watched' | 'liked' | 'disliked';
+  page: number;
+}
 
-  // Top row: Watchlist viewer + Rate watched movies
-  kb.callback('🎞 Мой Watchlist', 'hist:wl:1')
+const pendingRateEdits = new Map<number, PendingRateEditState>();
+
+export function buildHistoryKeyboard(): InlineKeyboardMarkup {
+  return new SmartKeyboard()
+    .callback('🎞 Мой Watchlist', 'hist:wl:1')
     .callback('⭐ Оценить фильмы', 'hist:rate:init')
-    .row('center');
-
-  const tabs: Array<{ type: HistoryCategory; label: string }> = [
-    { type: 'selected', label: '🎯 Выбранные' },
-    { type: 'watched', label: '✅ Просмотренные' },
-    { type: 'liked', label: '👍 Понравились' },
-    { type: 'disliked', label: '👎 Не понравились' },
-  ];
-
-  tabs.forEach((tab, index) => {
-    const isActive = activeTab === tab.type;
-    const prefix = isActive ? '• ' : '';
-    kb.callback(`${prefix}${tab.label}`, `hist:tab:${tab.type}`, {
-      disabled: isActive,
-    });
-    if (index % 2 === 1) {
-      kb.row('center');
-    }
-  });
-
-  if (activeTab) {
-    kb.callback('📊 К сводке', 'hist:summary');
-  }
-  kb.callback('⬅️ В меню', 'nav:menu');
-
-  return kb.toMarkup();
+    .row('center')
+    .callback('🎯 Выбранные', 'hist:tab:selected:1')
+    .callback('✅ Просмотренные', 'hist:tab:watched:1')
+    .row('center')
+    .callback('👍 Понравились', 'hist:tab:liked:1')
+    .callback('👎 Не понравились', 'hist:tab:disliked:1')
+    .row('center')
+    .callback('⬅️ В меню', 'nav:menu')
+    .toMarkup();
 }
 
 export function buildWatchlistPaginationKeyboard(
@@ -57,24 +47,46 @@ export function buildWatchlistPaginationKeyboard(
     .callback('⬅️ Назад', `hist:wl:${page - 1}`, { disabled: page <= 1 })
     .callback('Вперёд ➡️', `hist:wl:${page + 1}`, { disabled: page >= totalPages })
     .row('center')
-    .callback('↩️ Вернуться', 'hist:summary')
+    .callback('⬅️ История', 'hist:summary')
     .toMarkup();
+}
+
+export function buildHistoryTabPaginationKeyboard(
+  type: HistoryCategory,
+  page: number,
+  totalPages: number,
+  totalCount: number
+): InlineKeyboardMarkup {
+  const kb = new SmartKeyboard()
+    .callback('⬅️ Назад', `hist:tab:${type}:${page - 1}`, { disabled: page <= 1 })
+    .callback('Вперёд ➡️', `hist:tab:${type}:${page + 1}`, {
+      disabled: page >= totalPages,
+    });
+
+  if (
+    totalCount > 0 &&
+    (type === 'watched' || type === 'liked' || type === 'disliked')
+  ) {
+    kb.row('center').callback(
+      '✏️ Изменить оценку',
+      `hist:edit_rate:${type}:${page}`
+    );
+  }
+
+  kb.row('center').callback('⬅️ История', 'hist:summary');
+  return kb.toMarkup();
 }
 
 export function buildRateableMovieKeyboard(
   movieId: string,
   index: number,
-  totalCount: number,
-  currentReaction: ReactionType | null
+  totalCount: number
 ): InlineKeyboardMarkup {
-  const likeLabel = currentReaction === 'like' ? '• 👍' : '👍';
-  const dislikeLabel = currentReaction === 'dislike' ? '• 👎' : '👎';
-
   return new SmartKeyboard()
-    .callback(likeLabel, `hist:rate:set:${index}:like:${movieId}`, {
+    .callback('👍', `hist:rate:set:${index}:like:${movieId}`, {
       style: 'success',
     })
-    .callback(dislikeLabel, `hist:rate:set:${index}:dislike:${movieId}`, {
+    .callback('👎', `hist:rate:set:${index}:dislike:${movieId}`, {
       style: 'danger',
     })
     .row('center')
@@ -83,7 +95,7 @@ export function buildRateableMovieKeyboard(
       disabled: index >= totalCount - 1,
     })
     .row('center')
-    .callback('↩️ Вернуться', 'hist:summary')
+    .callback('⬅️ История', 'hist:summary')
     .toMarkup();
 }
 
@@ -97,13 +109,14 @@ export function registerHistoryHandlers(
     telegramId: number,
     requestedIndex: number | null
   ): Promise<void> {
+    pendingRateEdits.delete(telegramId);
     const view = await feedbackSvc.getRateableMovieAt(telegramId, requestedIndex);
     if (!view) {
       const kb = new SmartKeyboard()
-        .callback('↩️ Вернуться', 'hist:summary')
+        .callback('⬅️ История', 'hist:summary')
         .toMarkup();
       const emptyHtml =
-        '⭐ <b>Оценка просмотренных</b>\n\n<i>У вас пока нет просмотренных или выбранных фильмов для оценки.</i>';
+        '⭐ <b>Фильмы без оценки</b>\n\n<i>У вас нет неоценённых просмотренных фильмов — все фильмы уже оценены!</i>';
       if (ctx.callbackQuery?.message) {
         await ctx
           .editMessageText(emptyHtml, { parse_mode: 'HTML', reply_markup: kb })
@@ -118,8 +131,45 @@ export function registerHistoryHandlers(
     const kb = buildRateableMovieKeyboard(
       view.entry.id,
       view.index,
-      view.totalCount,
-      view.entry.reaction
+      view.totalCount
+    );
+
+    if (ctx.callbackQuery?.message) {
+      await ctx
+        .editMessageText(html, {
+          parse_mode: 'HTML',
+          link_preview_options: { is_disabled: true },
+          reply_markup: kb,
+        })
+        .catch(() => undefined);
+    } else {
+      await ctx.reply(html, {
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
+        reply_markup: kb,
+      });
+    }
+  }
+
+  async function renderHistoryTabPage(
+    ctx: Context,
+    telegramId: number,
+    tabType: HistoryCategory,
+    requestedPage: number
+  ): Promise<void> {
+    pendingRateEdits.delete(telegramId);
+    const pageData = await histSvc.getUserHistoryPage(
+      telegramId,
+      tabType,
+      requestedPage,
+      15
+    );
+    const html = formatHistoryPageHtml(pageData);
+    const kb = buildHistoryTabPaginationKeyboard(
+      tabType,
+      pageData.page,
+      pageData.totalPages,
+      pageData.totalCount
     );
 
     if (ctx.callbackQuery?.message) {
@@ -145,6 +195,7 @@ export function registerHistoryHandlers(
       return;
     }
 
+    pendingRateEdits.delete(telegramId);
     const summary = await histSvc.getUserHistorySummary(telegramId);
     const html = formatHistorySummaryHtml(summary);
 
@@ -160,6 +211,7 @@ export function registerHistoryHandlers(
       return;
     }
 
+    pendingRateEdits.delete(telegramId);
     await ctx.answerCallbackQuery();
     const summary = await histSvc.getUserHistorySummary(telegramId);
     const html = formatHistorySummaryHtml(summary);
@@ -184,7 +236,7 @@ export function registerHistoryHandlers(
     }
   });
 
-  // Open interactive rating screen (jumps to first unrated movie if any)
+  // Open interactive rating screen (shows ONLY unrated movies)
   bot.callbackQuery('hist:rate:init', async (ctx) => {
     const telegramId = ctx.from?.id;
     if (!telegramId) {
@@ -192,10 +244,10 @@ export function registerHistoryHandlers(
     }
 
     await ctx.answerCallbackQuery();
-    await renderRateableMovie(ctx, telegramId, null);
+    await renderRateableMovie(ctx, telegramId, 0);
   });
 
-  // Navigate between watched/selected movies in rating screen
+  // Navigate between unrated movies in rating screen
   bot.callbackQuery(/^hist:rate:view:(-?\d+)$/, async (ctx) => {
     const telegramId = ctx.from?.id;
     if (!telegramId) {
@@ -207,7 +259,7 @@ export function registerHistoryHandlers(
     await renderRateableMovie(ctx, telegramId, idx);
   });
 
-  // Set or change 👍 / 👎 rating on a movie and advance to next
+  // Rate an unrated movie -> it leaves the unrated list, so render the next unrated at currentIdx
   bot.callbackQuery(
     /^hist:rate:set:(\d+):(like|dislike):([a-fA-F0-9]{12})$/,
     async (ctx) => {
@@ -237,8 +289,8 @@ export function registerHistoryHandlers(
       const emoji = reaction === 'like' ? '👍' : '👎';
       await ctx.answerCallbackQuery({ text: `Оценка ${emoji} сохранена!` });
 
-      // Automatically move to the next movie (or stay on current if at the end)
-      await renderRateableMovie(ctx, telegramId, currentIdx + 1);
+      // Since the rated movie is no longer unrated, `currentIdx` now points to the next unrated movie
+      await renderRateableMovie(ctx, telegramId, currentIdx);
     }
   );
 
@@ -249,6 +301,7 @@ export function registerHistoryHandlers(
       return;
     }
 
+    pendingRateEdits.delete(telegramId);
     const requestedPage = Number(ctx.match[1]) || 1;
     await ctx.answerCallbackQuery();
 
@@ -260,19 +313,22 @@ export function registerHistoryHandlers(
       await ctx
         .editMessageText(html, {
           parse_mode: 'HTML',
+          link_preview_options: { is_disabled: true },
           reply_markup: kb,
         })
         .catch(() => undefined);
     } else {
       await ctx.reply(html, {
         parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
         reply_markup: kb,
       });
     }
   });
 
+  // Paginated history tabs (15 movies per page)
   bot.callbackQuery(
-    /^hist:tab:(selected|watched|liked|disliked)$/,
+    /^hist:tab:(selected|watched|liked|disliked)(?::(\d+))?$/,
     async (ctx) => {
       const telegramId = ctx.from?.id;
       if (!telegramId) {
@@ -280,24 +336,162 @@ export function registerHistoryHandlers(
       }
 
       const tabType = ctx.match[1] as HistoryCategory;
+      const requestedPage = Number(ctx.match[2]) || 1;
       await ctx.answerCallbackQuery();
 
-      const items = await histSvc.getUserHistoryByType(telegramId, tabType, 15);
-      const html = formatHistoryListHtml(tabType, items);
-
-      if (ctx.callbackQuery.message) {
-        await ctx
-          .editMessageText(html, {
-            parse_mode: 'HTML',
-            reply_markup: buildHistoryKeyboard(tabType),
-          })
-          .catch(() => undefined);
-      } else {
-        await ctx.reply(html, {
-          parse_mode: 'HTML',
-          reply_markup: buildHistoryKeyboard(tabType),
-        });
-      }
+      await renderHistoryTabPage(ctx, telegramId, tabType, requestedPage);
     }
   );
+
+  // Button «✏️ Изменить оценку» inside watched / liked / disliked tabs
+  bot.callbackQuery(
+    /^hist:edit_rate:(watched|liked|disliked):(\d+)$/,
+    async (ctx) => {
+      const telegramId = ctx.from?.id;
+      if (!telegramId) {
+        return;
+      }
+
+      const tabType = ctx.match[1] as 'watched' | 'liked' | 'disliked';
+      const page = Number(ctx.match[2]) || 1;
+
+      const pageData = await histSvc.getUserHistoryPage(telegramId, tabType, page, 15);
+      if (pageData.totalCount === 0) {
+        await ctx.answerCallbackQuery({
+          text: 'Список пуст.',
+          show_alert: true,
+        });
+        return;
+      }
+
+      pendingRateEdits.set(telegramId, { type: tabType, page });
+      await ctx.answerCallbackQuery();
+
+      const kb = new SmartKeyboard()
+        .callback('⬅️ Назад к списку', `hist:tab:${tabType}:${page}`)
+        .toMarkup();
+
+      await ctx.reply(
+        `✏️ <b>Изменение оценки</b>\n\nОтправьте в чат <b>номер фильма</b> из списка (от <b>1</b> до <b>${pageData.totalCount}</b>), оценку которого хотите изменить:`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: kb,
+        }
+      );
+    }
+  );
+
+  // Handle user choosing new 👍 / 👎 rating for the movie selected by number
+  bot.callbackQuery(
+    /^hist:edit_set:(watched|liked|disliked):(\d+):(like|dislike):([a-fA-F0-9]{12})$/,
+    async (ctx) => {
+      const telegramId = ctx.from?.id;
+      if (!telegramId) {
+        return;
+      }
+
+      const tabType = ctx.match[1] as HistoryCategory;
+      const page = Number(ctx.match[2]) || 1;
+      const reaction = ctx.match[3] as ReactionType;
+      const movieId = ctx.match[4];
+
+      const updated = await feedbackSvc.setOrUpdateReaction(
+        telegramId,
+        movieId,
+        reaction
+      );
+
+      if (!updated) {
+        await ctx.answerCallbackQuery({
+          text: 'Фильм не найден.',
+          show_alert: true,
+        });
+        return;
+      }
+
+      const emoji = reaction === 'like' ? '👍' : '👎';
+      await ctx.answerCallbackQuery({ text: `Оценка изменена на ${emoji}!` });
+
+      await renderHistoryTabPage(ctx, telegramId, tabType, page);
+    }
+  );
+
+  // Text handler for entering movie number when «✏️ Изменить оценку» is active
+  bot.on('message:text', async (ctx, next) => {
+    const telegramId = ctx.from?.id;
+    if (!telegramId || !pendingRateEdits.has(telegramId)) {
+      await next();
+      return;
+    }
+
+    const text = ctx.message.text.trim();
+    if (text.startsWith('/')) {
+      pendingRateEdits.delete(telegramId);
+      await next();
+      return;
+    }
+
+    const state = pendingRateEdits.get(telegramId)!;
+    const itemNumber = Number(text);
+
+    const found = await histSvc.getHistoryItemByNumber(
+      telegramId,
+      state.type,
+      itemNumber
+    );
+
+    if (!found) {
+      const kb = new SmartKeyboard()
+        .callback('⬅️ Назад к списку', `hist:tab:${state.type}:${state.page}`)
+        .toMarkup();
+      await ctx.reply(
+        `⚠️ Фильм с таким номером не найден. Введите число от 1 до количества фильмов в списке или вернитесь назад:`,
+        { reply_markup: kb }
+      );
+      return;
+    }
+
+    pendingRateEdits.delete(telegramId);
+    const { item } = found;
+    const yearStr = item.year ? ` (${item.year})` : '';
+    const url = buildLetterboxdUrl(item);
+
+    let currentLabel = '⚪️ Нет оценки';
+    if (item.reaction === 'like') {
+      currentLabel = '👍 Понравился';
+    } else if (item.reaction === 'dislike') {
+      currentLabel = '👎 Не понравился';
+    }
+
+    const likeLabel = item.reaction === 'like' ? '• 👍' : '👍';
+    const dislikeLabel = item.reaction === 'dislike' ? '• 👎' : '👎';
+
+    const kb = new SmartKeyboard()
+      .callback(
+        likeLabel,
+        `hist:edit_set:${state.type}:${state.page}:like:${item.id}`,
+        { style: 'success' }
+      )
+      .callback(
+        dislikeLabel,
+        `hist:edit_set:${state.type}:${state.page}:dislike:${item.id}`,
+        { style: 'danger' }
+      )
+      .row('center')
+      .callback('⬅️ Назад к списку', `hist:tab:${state.type}:${state.page}`)
+      .toMarkup();
+
+    await ctx.reply(
+      [
+        `🎬 <b>${itemNumber}. <a href="${escapeHtml(url)}">${escapeHtml(item.title)}</a></b>${yearStr}`,
+        `Текущая оценка: <b>${currentLabel}</b>\n`,
+        `Выберите новую оценку:`,
+      ].join('\n'),
+      {
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
+        reply_markup: kb,
+      }
+    );
+  });
 }

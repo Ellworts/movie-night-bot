@@ -195,8 +195,8 @@ export class FeedbackService {
   }
 
   /**
-   * Returns a single watched/selected movie at `requestedIndex` for interactive rating.
-   * If `requestedIndex` is null, jumps to the first unrated movie (or 0 if all are rated).
+   * Returns a single UNRATED watched/selected movie at `requestedIndex` for interactive rating.
+   * Shows only movies without a rating (`reaction === null`).
    */
   public async getRateableMovieAt(
     telegramId: number,
@@ -207,29 +207,21 @@ export class FeedbackService {
       return null;
     }
 
-    const list = this.buildRateableList(user);
-    const totalCount = list.length;
+    const unratedList = this.buildRateableList(user).filter(
+      (item) => item.reaction === null
+    );
+    const totalCount = unratedList.length;
     if (totalCount === 0) {
       return null;
     }
 
-    const unratedCount = list.filter((item) => item.reaction === null).length;
-
-    let index = requestedIndex ?? 0;
-    if (requestedIndex === null && unratedCount > 0) {
-      const firstUnratedIdx = list.findIndex((item) => item.reaction === null);
-      if (firstUnratedIdx >= 0) {
-        index = firstUnratedIdx;
-      }
-    }
-
-    index = Math.min(Math.max(0, index), totalCount - 1);
+    const index = Math.min(Math.max(0, requestedIndex ?? 0), totalCount - 1);
 
     return {
-      entry: list[index],
+      entry: unratedList[index],
       index,
       totalCount,
-      unratedCount,
+      unratedCount: totalCount,
     };
   }
 

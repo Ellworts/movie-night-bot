@@ -2,6 +2,7 @@ import { UserSettings } from '../models/User';
 import { MovieCardData } from '../services/tmdb.service';
 import {
   HistoryCategory,
+  HistoryPageResult,
   HistoryRecordItem,
   UserHistorySummary,
   WatchlistPageResult,
@@ -14,6 +15,23 @@ export function escapeHtml(text: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+export function buildLetterboxdUrl(item: {
+  title: string;
+  originalTitle?: string | null;
+  year: number | null;
+  letterboxdUri: string | null;
+  tmdbId: number | null;
+}): string {
+  return (
+    item.letterboxdUri ||
+    (item.tmdbId
+      ? `https://letterboxd.com/tmdb/${item.tmdbId}`
+      : `https://letterboxd.com/search/${encodeURIComponent(
+          `${item.originalTitle || item.title}${item.year ? ` ${item.year}` : ''}`
+        )}/`)
+  );
 }
 
 export function formatMovieCardHtml(
@@ -57,14 +75,7 @@ export function formatMovieCardHtml(
     links.push(`▶️ <a href="${escapeHtml(movie.trailerUrl)}">Трейлер</a>`);
   }
 
-  const letterboxdUrl =
-    movie.letterboxdUri ||
-    (movie.tmdbId
-      ? `https://letterboxd.com/tmdb/${movie.tmdbId}`
-      : `https://letterboxd.com/search/${encodeURIComponent(
-          `${movie.originalTitle || movie.title}${movie.year ? ` ${movie.year}` : ''}`
-        )}/`);
-
+  const letterboxdUrl = buildLetterboxdUrl(movie);
   links.push(`🔗 <a href="${escapeHtml(letterboxdUrl)}">Letterboxd</a>`);
   lines.push(`\n${links.join('  •  ')}`);
 
@@ -89,6 +100,7 @@ export function formatSettingsHtml(settings: UserSettings): string {
 
   const rating = settings.minRating ? `от ${settings.minRating}/10` : 'Любой';
   const diversity = settings.genreDiversity ? 'Вкл' : 'Выкл';
+  const watchedDate = settings.showWatchedDate ? 'Вкл' : 'Выкл';
 
   return [
     '⚙️ <b>Настройки подбора</b>\n',
@@ -97,6 +109,7 @@ export function formatSettingsHtml(settings: UserSettings): string {
     `📅 <b>Годы выпуска:</b> ${period}`,
     `⭐ <b>Мин. рейтинг:</b> ${rating}`,
     `🎲 <b>Разнообразие жанров:</b> ${diversity}`,
+    `📆 <b>Дата просмотра в истории:</b> ${watchedDate}`,
   ].join('\n');
 }
 
@@ -120,26 +133,54 @@ export function formatHistorySummaryHtml(summary: UserHistorySummary): string {
     '📚 <b>Ваша история</b>\n',
     `🎞 В Watchlist: <b>${summary.watchlistCount}</b>`,
     `🎯 Выбрано на вечер: <b>${summary.selectedCount}</b>`,
-    `✅ Просмотрено: <b>${summary.watchedCount}</b> (👍 <b>${summary.likedCount}</b> / 👎 <b>${summary.dislikedCount}</b>)`,
+    `✅ Просмотрено: <b>${summary.watchedCount}</b> (👍 <b>${summary.likedCount}</b> / 👎 <b>${summary.dislikedCount}</b> • без оценки: <b>${summary.unratedCount}</b>)`,
   ].join('\n');
+}
+
+export function formatHistoryPageHtml(pageData: HistoryPageResult): string {
+  const title = HISTORY_TITLES[pageData.type];
+  if (pageData.totalCount === 0 || pageData.items.length === 0) {
+    return `<b>${title}</b>\n\n<i>Пока пусто.</i>`;
+  }
+
+  const startIndex = (pageData.page - 1) * pageData.pageSize;
+  const header = `<b>${title}</b> (стр. ${pageData.page} из ${pageData.totalPages}, всего: ${pageData.totalCount})\n`;
+
+  const lines = pageData.items.map((item, idx) => {
+    const num = startIndex + idx + 1;
+    const yearStr = item.year ? ` (${item.year})` : '';
+    const url = buildLetterboxdUrl(item);
+    const titleLink = `<a href="${escapeHtml(url)}"><b>${escapeHtml(item.title)}</b></a>`;
+
+    let ratingPrefix = '';
+    if (pageData.type === 'watched' && item.reaction) {
+      ratingPrefix = item.reaction === 'like' ? '👍 ' : '👎 ';
+    }
+
+    const dateSuffix = pageData.showWatchedDate
+      ? ` — <i>${formatHistoryDate(item.eventDate)}</i>`
+      : '';
+
+    return `${num}. ${ratingPrefix}${titleLink}${yearStr}${dateSuffix}`;
+  });
+
+  return `${header}\n${lines.join('\n')}`;
 }
 
 export function formatHistoryListHtml(
   type: HistoryCategory,
-  items: HistoryRecordItem[]
+  items: HistoryRecordItem[],
+  showWatchedDate: boolean = false
 ): string {
-  const header = `<b>${HISTORY_TITLES[type]}</b>\n`;
-  if (items.length === 0) {
-    return `${header}\n<i>Пока пусто.</i>`;
-  }
-
-  const lines = items.map((item, idx) => {
-    const yearStr = item.year ? ` (${item.year})` : '';
-    const dateStr = formatHistoryDate(item.eventDate);
-    return `${idx + 1}. <b>${escapeHtml(item.title)}</b>${yearStr} — <i>${dateStr}</i>`;
+  return formatHistoryPageHtml({
+    type,
+    items,
+    totalCount: items.length,
+    page: 1,
+    totalPages: 1,
+    pageSize: Math.max(15, items.length),
+    showWatchedDate,
   });
-
-  return `${header}\n${lines.join('\n')}`;
 }
 
 export function formatWatchlistPageHtml(pageData: WatchlistPageResult): string {
@@ -153,35 +194,21 @@ export function formatWatchlistPageHtml(pageData: WatchlistPageResult): string {
   const lines = pageData.items.map((movie, idx) => {
     const num = startIndex + idx + 1;
     const yearStr = movie.year ? ` (${movie.year})` : '';
-    return `${num}. <b>${escapeHtml(movie.title)}</b>${yearStr}`;
+    const url = buildLetterboxdUrl(movie);
+    return `${num}. <a href="${escapeHtml(url)}"><b>${escapeHtml(movie.title)}</b></a>${yearStr}`;
   });
 
   return `${header}\n${lines.join('\n')}`;
 }
 
 export function formatRateableMovieHtml(view: RateableMovieView): string {
-  const { entry, index, totalCount, unratedCount } = view;
+  const { entry, index, totalCount } = view;
   const yearStr = entry.year ? ` (${entry.year})` : '';
-
-  let statusLabel = '⚪️ Нет оценки';
-  if (entry.reaction === 'like') {
-    statusLabel = '👍 Понравился';
-  } else if (entry.reaction === 'dislike') {
-    statusLabel = '👎 Не понравился';
-  }
-
-  const letterboxdUrl =
-    entry.letterboxdUri ||
-    (entry.tmdbId
-      ? `https://letterboxd.com/tmdb/${entry.tmdbId}`
-      : `https://letterboxd.com/search/${encodeURIComponent(
-          `${entry.title}${entry.year ? ` ${entry.year}` : ''}`
-        )}/`);
+  const letterboxdUrl = buildLetterboxdUrl(entry);
 
   return [
-    `⭐ <b>Оценка просмотренных</b> (${index + 1} из ${totalCount} • без оценки: ${unratedCount})\n`,
-    `🎬 <b>${escapeHtml(entry.title)}</b>${yearStr}`,
-    `Оценка: <b>${statusLabel}</b>`,
-    `\n🔗 <a href="${escapeHtml(letterboxdUrl)}">Letterboxd</a>`,
+    `⭐ <b>Фильмы без оценки</b> (${index + 1} из ${totalCount})\n`,
+    `🎬 <a href="${escapeHtml(letterboxdUrl)}"><b>${escapeHtml(entry.title)}</b></a>${yearStr}`,
+    `\nОцените просмотренный фильм:`,
   ].join('\n');
 }
