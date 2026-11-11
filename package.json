@@ -1,0 +1,31 @@
+{
+  "name": "movie-night-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot that helps users pick movies from their Letterboxd Watchlist",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "test": "jest --runInBand",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "bullmq": "^5.12.0",
+    "csv-parse": "^5.5.6",
+    "dotenv": "^16.4.5",
+    "grammy": "^1.27.0",
+    "ioredis": "^5.4.1",
+    "mongoose": "^8.6.1",
+    "pino": "^9.4.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.12",
+    "@types/node": "^22.5.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.5.4"
+  }
+}
