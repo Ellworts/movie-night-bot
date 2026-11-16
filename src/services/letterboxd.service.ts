@@ -357,7 +357,7 @@ export class LetterboxdService {
     for (const item of [...scrapedWatched].reverse()) {
       const existing = watchedById.get(item.id);
       if (existing) {
-        if (existing.reaction === null && item.reaction !== null) {
+        if (item.reaction !== null && existing.reaction !== item.reaction) {
           existing.reaction = item.reaction;
           if (item.reaction === 'like') ratedLikedCount++;
           if (item.reaction === 'dislike') ratedDislikedCount++;
