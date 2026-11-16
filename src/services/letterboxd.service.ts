@@ -205,6 +205,63 @@ export class LetterboxdService {
     return maxPage;
   }
 
+  /**
+   * Parses the user's public Letterboxd RSS feed (`/<username>/rss/`) for recent diary entries & ratings.
+   */
+  public async scrapeRssFeed(username: string): Promise<ScrapedLetterboxdMovie[]> {
+    const rssUrl = `https://letterboxd.com/${encodeURIComponent(username)}/rss/`;
+    const res = await this.fetchHtml(rssUrl);
+    if (res.status !== 200) {
+      return [];
+    }
+
+    const items = res.html.match(/<item>[\s\S]*?<\/item>/g) || [];
+    const results: ScrapedLetterboxdMovie[] = [];
+
+    for (const itemXml of items) {
+      const titleMatch = itemXml.match(
+        /<letterboxd:filmTitle>([\s\S]*?)<\/letterboxd:filmTitle>/
+      );
+      if (!titleMatch) {
+        continue;
+      }
+
+      const title = decodeHtmlEntities(titleMatch[1]).trim();
+      if (!title) {
+        continue;
+      }
+
+      const yearMatch = itemXml.match(
+        /<letterboxd:filmYear>(\d{4})<\/letterboxd:filmYear>/
+      );
+      const year = yearMatch ? Number(yearMatch[1]) : null;
+
+      const ratingMatch = itemXml.match(
+        /<letterboxd:memberRating>([\d.]+)<\/letterboxd:memberRating>/
+      );
+      let reaction: ReactionType | null = null;
+      if (ratingMatch) {
+        const stars = Number(ratingMatch[1]);
+        if (!Number.isNaN(stars) && stars > 0) {
+          reaction = stars <= 2.5 ? 'dislike' : 'like';
+        }
+      }
+
+      const linkMatch = itemXml.match(/<link>([\s\S]*?)<\/link>/);
+      const letterboxdUri = linkMatch ? linkMatch[1].trim() : null;
+
+      results.push({
+        id: buildMovieId(title, year),
+        title,
+        year,
+        letterboxdUri,
+        reaction,
+      });
+    }
+
+    return results;
+  }
+
   private async fetchHtml(url: string): Promise<{ status: number; html: string }> {
     const response = await this.fetchFn(url, {
       headers: {
@@ -311,13 +368,23 @@ export class LetterboxdService {
       );
     }
 
-    const [scrapedWatchlist, scrapedWatched] = await Promise.all([
+    const [scrapedWatchlist, scrapedFilmsPage, scrapedRss] = await Promise.all([
       this.scrapePaginatedSection(username, 'watchlist', 25),
-      this.scrapePaginatedSection(username, 'films', 15).catch((err) => {
+      this.scrapePaginatedSection(username, 'films', 1).catch((err) => {
         logger.warn({ err, username }, 'Could not scrape watched films; continuing with watchlist');
         return [] as ScrapedLetterboxdMovie[];
       }),
+      this.scrapeRssFeed(username).catch(() => [] as ScrapedLetterboxdMovie[]),
     ]);
+
+    const watchedDedup = new Map<string, ScrapedLetterboxdMovie>();
+    for (const item of [...scrapedFilmsPage, ...scrapedRss]) {
+      const prev = watchedDedup.get(item.id);
+      if (!prev || (prev.reaction === null && item.reaction !== null)) {
+        watchedDedup.set(item.id, item);
+      }
+    }
+    const scrapedWatched = Array.from(watchedDedup.values());
 
     const user = await UserModel.findOneAndUpdate(
       { telegramId },
