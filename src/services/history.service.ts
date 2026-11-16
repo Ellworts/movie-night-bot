@@ -14,7 +14,10 @@ export interface HistoryRecordItem {
 }
 
 export interface UserHistorySummary {
+  letterboxdUsername: string | null;
   watchlistCount: number;
+  letterboxdWatchlistCount: number;
+  botWatchlistCount: number;
   selectedCount: number;
   watchedCount: number;
   likedCount: number;
@@ -25,6 +28,8 @@ export interface UserHistorySummary {
 export interface WatchlistPageResult {
   items: IWatchlistEntry[];
   totalCount: number;
+  letterboxdWatchlistCount: number;
+  botWatchlistCount: number;
   page: number;
   totalPages: number;
   pageSize: number;
@@ -49,7 +54,10 @@ export class HistoryService {
     const user = await UserModel.findOne({ telegramId });
     if (!user) {
       return {
+        letterboxdUsername: null,
         watchlistCount: 0,
+        letterboxdWatchlistCount: 0,
+        botWatchlistCount: 0,
         selectedCount: 0,
         watchedCount: 0,
         likedCount: 0,
@@ -68,6 +76,8 @@ export class HistoryService {
     }
 
     const watchlistCount = user.watchlist.length;
+    const botWatchlistCount = user.watchlist.filter((w) => w.source === 'bot').length;
+    const letterboxdWatchlistCount = watchlistCount - botWatchlistCount;
     const watchedCount = user.watched.length;
     const likedCount = user.watched.filter((w) => w.reaction === 'like').length;
     const dislikedCount = user.watched.filter((w) => w.reaction === 'dislike').length;
@@ -76,7 +86,10 @@ export class HistoryService {
     const selectedCount = user.selected.length;
 
     return {
+      letterboxdUsername: user.letterboxdUsername ?? null,
       watchlistCount,
+      letterboxdWatchlistCount,
+      botWatchlistCount,
       selectedCount,
       watchedCount,
       likedCount,
@@ -96,6 +109,8 @@ export class HistoryService {
     const user = await UserModel.findOne({ telegramId }).lean();
     const allItems = user ? [...user.watchlist].reverse() : [];
     const totalCount = allItems.length;
+    const botWatchlistCount = allItems.filter((w) => w.source === 'bot').length;
+    const letterboxdWatchlistCount = totalCount - botWatchlistCount;
     const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
     const page = Math.min(Math.max(1, requestedPage), totalPages);
     const skip = (page - 1) * pageSize;
@@ -105,6 +120,8 @@ export class HistoryService {
     return {
       items,
       totalCount,
+      letterboxdWatchlistCount,
+      botWatchlistCount,
       page,
       totalPages,
       pageSize,

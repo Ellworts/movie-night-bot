@@ -13,7 +13,7 @@ export function buildMainMenuKeyboard(): InlineKeyboardMarkup {
     .callback('⚙️ Настройки', 'set:main')
     .callback('📚 История', 'hist:summary')
     .row('center')
-    .callback('📥 Импорт CSV', 'cmd:import_help')
+    .callback('🔗 Профиль Letterboxd', 'cmd:import_help')
     .toMarkup();
 }
 
@@ -51,11 +51,11 @@ export function registerStartHandlers(bot: Bot<Context>): void {
     const text = [
       '📖 <b>Команды:</b>',
       '',
-      '/recommend — Фильм из вашего Watchlist',
+      '/recommend — Фильм из вашего Watchlist (Letterboxd + Бот)',
       '/random — Случайный фильм (TMDB)',
       '/settings — Настройки фильтров',
-      '/history — История и оценки',
-      '/import — Импорт CSV из Letterboxd',
+      '/history — История, Watchlist и оценки',
+      '/import — Привязать или обновить профиль Letterboxd',
       '/about — О боте',
     ].join('\n');
 
@@ -67,7 +67,7 @@ export function registerStartHandlers(bot: Bot<Context>): void {
     const text = [
       '🎬 <b>Movie Night Bot</b>',
       '',
-      'Подбор фильмов из Letterboxd Watchlist и случайный поиск по фильтрам.',
+      'Подбор фильмов из объединённого списка (Letterboxd Watchlist + Bot Watchlist) и случайный поиск по фильтрам.',
       '',
       `<i>${TMDB_ATTRIBUTION_TEXT}</i>`,
     ].join('\n');

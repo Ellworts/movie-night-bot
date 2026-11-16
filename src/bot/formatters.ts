@@ -129,12 +129,23 @@ export function formatHistoryDate(date: Date): string {
 }
 
 export function formatHistorySummaryHtml(summary: UserHistorySummary): string {
-  return [
-    '📚 <b>Ваша история</b>\n',
-    `🎞 В Watchlist: <b>${summary.watchlistCount}</b>`,
+  const lines: string[] = ['📚 <b>Ваша история</b>\n'];
+  if (summary.letterboxdUsername) {
+    const profileUrl = `https://letterboxd.com/${encodeURIComponent(
+      summary.letterboxdUsername
+    )}/`;
+    lines.push(
+      `🔗 Профиль Letterboxd: <a href="${escapeHtml(profileUrl)}"><b>@${escapeHtml(
+        summary.letterboxdUsername
+      )}</b></a>`
+    );
+  }
+  lines.push(
+    `🎞 В Watchlist: <b>${summary.watchlistCount}</b> (Letterboxd: <b>${summary.letterboxdWatchlistCount}</b> • В боте: <b>${summary.botWatchlistCount}</b>)`,
     `🎯 Выбрано на вечер: <b>${summary.selectedCount}</b>`,
-    `✅ Просмотрено: <b>${summary.watchedCount}</b> (👍 <b>${summary.likedCount}</b> / 👎 <b>${summary.dislikedCount}</b> • без оценки: <b>${summary.unratedCount}</b>)`,
-  ].join('\n');
+    `✅ Просмотрено: <b>${summary.watchedCount}</b> (👍 <b>${summary.likedCount}</b> / 👎 <b>${summary.dislikedCount}</b> • без оценки: <b>${summary.unratedCount}</b>)`
+  );
+  return lines.join('\n');
 }
 
 export function formatHistoryPageHtml(pageData: HistoryPageResult): string {
@@ -185,17 +196,21 @@ export function formatHistoryListHtml(
 
 export function formatWatchlistPageHtml(pageData: WatchlistPageResult): string {
   if (pageData.totalCount === 0 || pageData.items.length === 0) {
-    return '🎞 <b>Ваш Watchlist</b>\n\n<i>Ваш список пока пуст.</i>';
+    return '🎞 <b>Ваш Watchlist</b>\n\n<i>Ваш список пока пуст. Отправьте ссылку на свой профиль Letterboxd или добавляйте фильмы кнопкой «➕ Добавить в Watchlist».</i>';
   }
 
   const startIndex = (pageData.page - 1) * pageData.pageSize;
-  const header = `🎞 <b>Ваш Watchlist</b> (стр. ${pageData.page} из ${pageData.totalPages}, всего: ${pageData.totalCount})\n`;
+  const header = [
+    `🎞 <b>Ваш Watchlist</b> (стр. ${pageData.page} из ${pageData.totalPages}, всего: ${pageData.totalCount})`,
+    `<i>Letterboxd: ${pageData.letterboxdWatchlistCount} • Добавлено в боте (📌): ${pageData.botWatchlistCount}</i>\n`,
+  ].join('\n');
 
   const lines = pageData.items.map((movie, idx) => {
     const num = startIndex + idx + 1;
     const yearStr = movie.year ? ` (${movie.year})` : '';
     const url = buildLetterboxdUrl(movie);
-    return `${num}. <a href="${escapeHtml(url)}"><b>${escapeHtml(movie.title)}</b></a>${yearStr}`;
+    const sourceBadge = movie.source === 'bot' ? '📌 ' : '';
+    return `${num}. ${sourceBadge}<a href="${escapeHtml(url)}"><b>${escapeHtml(movie.title)}</b></a>${yearStr}`;
   });
 
   return `${header}\n${lines.join('\n')}`;

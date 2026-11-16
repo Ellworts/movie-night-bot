@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import mongoose, { Schema, Document, Types } from 'mongoose';
 
 export type ReactionType = 'like' | 'dislike';
+export type WatchlistSource = 'letterboxd' | 'bot';
 
 export interface UserSettings {
   excludedGenres: string[];
@@ -19,6 +20,7 @@ export interface IWatchlistEntry {
   year: number | null;
   letterboxdUri: string | null;
   tmdbId: number | null;
+  source?: WatchlistSource;
 }
 
 export interface IWatchedEntry {
@@ -44,6 +46,7 @@ export interface ISelectedEntry {
 export interface IUser extends Document {
   _id: Types.ObjectId;
   telegramId: number;
+  letterboxdUsername?: string | null;
   settings: UserSettings;
   watchlist: IWatchlistEntry[];
   watched: IWatchedEntry[];
@@ -78,6 +81,7 @@ const WatchlistEntrySchema = new Schema<IWatchlistEntry>(
     year: { type: Number, default: null },
     letterboxdUri: { type: String, default: null },
     tmdbId: { type: Number, default: null },
+    source: { type: String, enum: ['letterboxd', 'bot'], default: 'letterboxd' },
   },
   { _id: false }
 );
@@ -111,6 +115,7 @@ const SelectedEntrySchema = new Schema<ISelectedEntry>(
 const UserSchema = new Schema<IUser>(
   {
     telegramId: { type: Number, required: true, unique: true, index: true },
+    letterboxdUsername: { type: String, default: null },
     settings: {
       type: UserSettingsSchema,
       default: () => ({

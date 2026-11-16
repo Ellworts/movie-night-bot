@@ -28,7 +28,7 @@ async function bootstrap(): Promise<void> {
       { command: 'settings', description: 'Настройки подбора фильмов' },
       { command: 'history', description: 'Ваша история и просмотр Watchlist' },
       { command: 'pending', description: 'Оценить выбранные ранее фильмы' },
-      { command: 'import', description: 'Как импортировать watchlist.csv из Letterboxd' },
+      { command: 'import', description: 'Привязать профиль Letterboxd' },
       { command: 'about', description: 'О боте и атрибуция TMDB' },
     ])
     .catch((err) => {

@@ -38,13 +38,13 @@ export function createBot(
     await next();
   });
 
-  // Register modular handlers
+  // Register modular handlers (only InlineKeyboardMarkup is used across the entire bot)
   registerStartHandlers(bot);
-  registerImportHandlers(bot);
   registerRecommendHandlers(bot);
   registerFeedbackHandlers(bot);
   registerHistoryHandlers(bot);
   registerSettingsHandlers(bot);
+  registerImportHandlers(bot);
 
   // Global error handler
   bot.catch((err) => {

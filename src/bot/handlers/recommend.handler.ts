@@ -163,12 +163,12 @@ export function registerRecommendHandlers(
     if (outcome.status === 'empty_watchlist') {
       const kb = new SmartKeyboard()
         .callback('🎲 Случайный фильм', 'rec:random')
-        .callback('📥 Импорт CSV', 'cmd:import_help')
+        .callback('🔗 Профиль Letterboxd', 'cmd:import_help')
         .row('center')
         .callback('⬅️ В меню', 'nav:menu')
         .toMarkup();
       await ctx.reply(
-        '📭 Ваш Watchlist пуст.\n\nОтправьте файл <code>watchlist.csv</code> из Letterboxd или попробуйте случайный подбор:',
+        '📭 Ваш Watchlist пуст.\n\nОтправьте ссылку на свой профиль <b>Letterboxd</b> или попробуйте случайный подбор:',
         { parse_mode: 'HTML', reply_markup: kb }
       );
       return;
