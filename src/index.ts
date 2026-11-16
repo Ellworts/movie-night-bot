@@ -27,6 +27,7 @@ async function bootstrap(): Promise<void> {
       { command: 'random', description: 'Случайный фильм вне Watchlist (по фильтрам)' },
       { command: 'settings', description: 'Настройки подбора фильмов' },
       { command: 'history', description: 'Ваша история и просмотр Watchlist' },
+      { command: 'sync', description: 'Синхронизировать профиль Letterboxd' },
       { command: 'pending', description: 'Оценить выбранные ранее фильмы' },
       { command: 'import', description: 'Привязать профиль Letterboxd' },
       { command: 'about', description: 'О боте и атрибуция TMDB' },

@@ -55,7 +55,8 @@ export function registerStartHandlers(bot: Bot<Context>): void {
       '/random — Случайный фильм (TMDB)',
       '/settings — Настройки фильтров',
       '/history — История, Watchlist и оценки',
-      '/import — Привязать или обновить профиль Letterboxd',
+      '/sync — Повторно синхронизировать профиль Letterboxd',
+      '/import — Привязать или сменить профиль Letterboxd',
       '/about — О боте',
     ].join('\n');
 

@@ -178,6 +178,27 @@ export function registerImportHandlers(
     await showLetterboxdPrompt(ctx, false);
   });
 
+  bot.command('sync', async (ctx) => {
+    const telegramId = ctx.from?.id;
+    if (!telegramId) {
+      return;
+    }
+
+    const arg = (ctx.match || '').trim();
+    if (arg) {
+      await runProfileSync(ctx, telegramId, arg, true);
+      return;
+    }
+
+    const user = await usrSvc.findOrCreateUser({ telegramId });
+    if (!user.letterboxdUsername) {
+      await showLetterboxdPrompt(ctx, false);
+      return;
+    }
+
+    await runProfileSync(ctx, telegramId, user.letterboxdUsername, true);
+  });
+
   bot.callbackQuery('cmd:import_help', async (ctx) => {
     await ctx.answerCallbackQuery();
     await showLetterboxdPrompt(ctx, true);
