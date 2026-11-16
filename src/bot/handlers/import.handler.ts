@@ -74,6 +74,11 @@ export function formatSyncResultHtml(res: LetterboxdSyncResult): string {
     lines.push(
       `\n👁 <b>Просмотренные:</b> +<b>${res.newlyWatchedCount}</b> новых (👍 <b>${res.ratedLikedCount}</b> / 👎 <b>${res.ratedDislikedCount}</b>)`
     );
+    if (res.movedFromWatchlistToWatched > 0) {
+      lines.push(
+        `   • Из них ушло из Watchlist → в просмотрено (без оценки): <b>${res.movedFromWatchlistToWatched}</b>`
+      );
+    }
   }
 
   return lines.join('\n');

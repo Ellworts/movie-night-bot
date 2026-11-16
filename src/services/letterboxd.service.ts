@@ -28,6 +28,7 @@ export interface LetterboxdSyncResult {
   botWatchlistCount: number;
   totalWatchlistCount: number;
   newlyAddedToWatchlist: number;
+  movedFromWatchlistToWatched: number;
   newlyWatchedCount: number;
   ratedLikedCount: number;
   ratedDislikedCount: number;
@@ -279,7 +280,7 @@ export class LetterboxdService {
     username: string,
     section: 'watchlist' | 'films',
     maxPagesLimit: number
-  ): Promise<ScrapedLetterboxdMovie[]> {
+  ): Promise<{ movies: ScrapedLetterboxdMovie[]; complete: boolean }> {
     const firstUrl = `https://letterboxd.com/${encodeURIComponent(username)}/${section}/`;
     const firstPage = await this.fetchHtml(firstUrl);
 
@@ -299,42 +300,41 @@ export class LetterboxdService {
       ...LetterboxdService.parseGridHtml(firstPage.html),
     ];
 
-    const totalPages = Math.min(
-      LetterboxdService.extractMaxPage(firstPage.html, section),
-      maxPagesLimit
-    );
+    const detectedMaxPage = LetterboxdService.extractMaxPage(firstPage.html, section);
+    const totalPages = Math.min(detectedMaxPage, maxPagesLimit);
+    let allPagesSucceeded = detectedMaxPage <= maxPagesLimit;
 
-    if (totalPages <= 1) {
-      return allMovies;
-    }
+    if (totalPages > 1) {
+      const remainingPages: number[] = [];
+      for (let p = 2; p <= totalPages; p++) {
+        remainingPages.push(p);
+      }
 
-    const remainingPages: number[] = [];
-    for (let p = 2; p <= totalPages; p++) {
-      remainingPages.push(p);
-    }
-
-    const batchSize = 4;
-    for (let i = 0; i < remainingPages.length; i += batchSize) {
-      const batch = remainingPages.slice(i, i + batchSize);
-      const batchPages = await Promise.all(
-        batch.map(async (pageNum) => {
-          const pageUrl = `https://letterboxd.com/${encodeURIComponent(
-            username
-          )}/${section}/page/${pageNum}/`;
-          try {
-            const res = await this.fetchHtml(pageUrl);
-            if (res.status === 200) {
-              return LetterboxdService.parseGridHtml(res.html);
+      const batchSize = 3;
+      for (let i = 0; i < remainingPages.length; i += batchSize) {
+        const batch = remainingPages.slice(i, i + batchSize);
+        const batchPages = await Promise.all(
+          batch.map(async (pageNum) => {
+            const pageUrl = `https://letterboxd.com/${encodeURIComponent(
+              username
+            )}/${section}/page/${pageNum}/`;
+            try {
+              const res = await this.fetchHtml(pageUrl);
+              if (res.status === 200) {
+                return LetterboxdService.parseGridHtml(res.html);
+              }
+              allPagesSucceeded = false;
+            } catch (err) {
+              allPagesSucceeded = false;
+              logger.warn({ err, username, section, pageNum }, 'Failed to scrape page');
             }
-          } catch (err) {
-            logger.warn({ err, username, section, pageNum }, 'Failed to scrape page');
-          }
-          return [];
-        })
-      );
+            return [];
+          })
+        );
 
-      for (const movies of batchPages) {
-        allMovies.push(...movies);
+        for (const movies of batchPages) {
+          allMovies.push(...movies);
+        }
       }
     }
 
@@ -345,12 +345,17 @@ export class LetterboxdService {
       }
     }
 
-    return Array.from(dedupMap.values());
+    return {
+      movies: Array.from(dedupMap.values()),
+      complete: allPagesSucceeded,
+    };
   }
 
   /**
    * Synchronizes a user's Letterboxd Watchlist and Watched/Ratings directly from their public profile,
    * while preserving movies added inside the bot (`source: 'bot'`).
+   * Any movie that was previously in the user's Letterboxd Watchlist and disappeared on re-sync
+   * is automatically moved to `watched` with `reaction: null` (watched, unrated).
    */
   public async syncUserProfile(
     telegramId: number,
@@ -368,17 +373,18 @@ export class LetterboxdService {
       );
     }
 
-    const [scrapedWatchlist, scrapedFilmsPage, scrapedRss] = await Promise.all([
+    const [watchlistRes, filmsRes, scrapedRss] = await Promise.all([
       this.scrapePaginatedSection(username, 'watchlist', 25),
       this.scrapePaginatedSection(username, 'films', 1).catch((err) => {
         logger.warn({ err, username }, 'Could not scrape watched films; continuing with watchlist');
-        return [] as ScrapedLetterboxdMovie[];
+        return { movies: [] as ScrapedLetterboxdMovie[], complete: false };
       }),
       this.scrapeRssFeed(username).catch(() => [] as ScrapedLetterboxdMovie[]),
     ]);
 
+    const scrapedWatchlist = watchlistRes.movies;
     const watchedDedup = new Map<string, ScrapedLetterboxdMovie>();
-    for (const item of [...scrapedFilmsPage, ...scrapedRss]) {
+    for (const item of [...filmsRes.movies, ...scrapedRss]) {
       const prev = watchedDedup.get(item.id);
       if (!prev || (prev.reaction === null && item.reaction !== null)) {
         watchedDedup.set(item.id, item);
@@ -408,9 +414,12 @@ export class LetterboxdService {
       { upsert: true, new: true }
     );
 
+    const isSameProfileOrInitial =
+      !user.letterboxdUsername ||
+      user.letterboxdUsername.toLowerCase() === username.toLowerCase();
     user.letterboxdUsername = username;
 
-    // 1. Merge watched movies & ratings
+    // 1. Merge watched movies & ratings from /films/ and /rss/
     const watchedById = new Map<string, IWatchedEntry>();
     for (const w of user.watched) {
       watchedById.set(w.id, w);
@@ -450,7 +459,36 @@ export class LetterboxdService {
       }
     }
 
-    // 2. Keep Bot Watchlist (`source === 'bot'`) that hasn't been watched
+    // 2. Compare previous Letterboxd Watchlist with new Letterboxd Watchlist:
+    // If a movie disappeared from Letterboxd Watchlist, move it to `watched` without rating (`reaction: null`)
+    const newScrapedWatchlistIds = new Set(scrapedWatchlist.map((m) => m.id));
+    let movedFromWatchlistToWatched = 0;
+
+    if (isSameProfileOrInitial && watchlistRes.complete) {
+      for (const oldItem of user.watchlist) {
+        if (
+          oldItem.source !== 'bot' &&
+          !newScrapedWatchlistIds.has(oldItem.id) &&
+          !watchedById.has(oldItem.id)
+        ) {
+          const entry: IWatchedEntry = {
+            id: oldItem.id,
+            title: oldItem.title,
+            year: oldItem.year,
+            letterboxdUri: oldItem.letterboxdUri,
+            tmdbId: oldItem.tmdbId,
+            reaction: null,
+            watchedAt: new Date(),
+          };
+          user.watched.push(entry);
+          watchedById.set(oldItem.id, entry);
+          movedFromWatchlistToWatched++;
+          newlyWatchedCount++;
+        }
+      }
+    }
+
+    // 3. Keep Bot Watchlist (`source === 'bot'`) that hasn't been watched
     const botWatchlistMap = new Map<string, IWatchlistEntry>();
     const previousWatchlistIds = new Set(user.watchlist.map((w) => w.id));
     const existingTmdbIds = new Map<string, number | null>();
@@ -461,8 +499,17 @@ export class LetterboxdService {
       }
     }
 
-    // 3. Build Letterboxd Watchlist (`source: 'letterboxd'`), excluding watched movies
-    const letterboxdWatchlist: IWatchlistEntry[] = [];
+    // 4. Build Letterboxd Watchlist (`source: 'letterboxd'`), excluding watched movies
+    const letterboxdWatchlistMap = new Map<string, IWatchlistEntry>();
+    if (!watchlistRes.complete) {
+      // If pagination had a transient failure, keep existing unwatched Letterboxd items so nothing is lost
+      for (const oldItem of user.watchlist) {
+        if (oldItem.source !== 'bot' && !watchedById.has(oldItem.id)) {
+          letterboxdWatchlistMap.set(oldItem.id, oldItem);
+        }
+      }
+    }
+
     let newlyAddedToWatchlist = 0;
 
     // Reverse scrapedWatchlist so most recently added on Letterboxd is at the end of array (shown first in reverse pagination)
@@ -477,7 +524,7 @@ export class LetterboxdService {
         newlyAddedToWatchlist++;
       }
 
-      letterboxdWatchlist.push({
+      letterboxdWatchlistMap.set(item.id, {
         id: item.id,
         title: item.title,
         year: item.year,
@@ -487,6 +534,7 @@ export class LetterboxdService {
       });
     }
 
+    const letterboxdWatchlist = Array.from(letterboxdWatchlistMap.values());
     const botWatchlist = Array.from(botWatchlistMap.values());
     user.watchlist = [...letterboxdWatchlist, ...botWatchlist];
 
@@ -501,6 +549,7 @@ export class LetterboxdService {
       botWatchlistCount: botWatchlist.length,
       totalWatchlistCount: user.watchlist.length,
       newlyAddedToWatchlist,
+      movedFromWatchlistToWatched,
       newlyWatchedCount,
       ratedLikedCount,
       ratedDislikedCount,
